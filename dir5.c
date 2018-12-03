@@ -1,4 +1,5 @@
 #include <dirent.h>
+#include <err.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,12 +7,13 @@
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #define BUFFSIZE 100000
 
 long beforeandafter = 1000;
 
-char *buff;
+char buff[BUFFSIZE + 1];
 
 
 
@@ -75,31 +77,28 @@ void strmcat(char *dst, const char *src, size_t dsize)
 	*dst = '\0';
 }
 
-
-ulong filesize(const char* a)
-{
-	FILE* infile;
-	ulong b;
-	if(!(infile = fopen(a, "a")))
-		return 0;
-		
-	b = ftell(infile);
-	fclose(infile);
-	return b;
-}
-
 int filesearch( const char* searchstring, const char* a)
 {
 	FILE* infile;
 	ulong fileLength;
-	if(!(fileLength = filesize(a)))
+
+	if(!(infile = fopen(a, "r")))
 		return 0;
-	infile = fopen(a, "r");
+
+	fseek(infile, 0, SEEK_END);
+	if ( (fileLength = ftell(infile)) == 0)
+	{
+		fclose(infile);
+		return 0;
+	}
+	fseek(infile, 0, SEEK_SET);
+
+
+
+	//~ printf("\n%u\n\n" , (unsigned int)fileLength);
 	long j, k = -1, g = 0, t = 0, localFL;
 	ulong before = beforeandafter, after = beforeandafter;
-	char *buffer;
-	buffer = (char*)malloc(before + 1);
-	if (buffer == NULL) perror("malloc");
+	char buffer[before + 1];
 	int setlength = 0;
 	int ssize = strlen(searchstring);
 	int setindex[ssize + 1];
@@ -107,13 +106,6 @@ int filesearch( const char* searchstring, const char* a)
 	
 	if(fileLength < BUFFSIZE)
 	{
-		if(!fileLength)
-		{
-			free(buffer);
-			fclose(infile);
-			return 0;
-		}
-		
 		localFL = fileLength;
 		fread(buff, 1, fileLength, infile);
 		fileLength = 0;
@@ -165,7 +157,6 @@ int filesearch( const char* searchstring, const char* a)
 						{
 							if(!fileLength)
 							{
-								free(buffer);
 								fclose(infile);
 								return 0;
 							}
@@ -201,7 +192,6 @@ int filesearch( const char* searchstring, const char* a)
 							{
 								if(!fileLength)
 								{
-									free(buffer);
 									fclose(infile);
 									return 0;
 								}
@@ -222,7 +212,6 @@ int filesearch( const char* searchstring, const char* a)
 						
 					}
 					printf("\n");
-					free(buffer);
 					fclose(infile);
 					return 1;
 				}
@@ -234,7 +223,12 @@ int filesearch( const char* searchstring, const char* a)
 		if(buff[t] == *searchstring)
 			setindex[setlength++] = 1;
 			
-			
+
+
+
+
+
+
 
 		if(++t == localFL)
 		{
@@ -242,7 +236,6 @@ int filesearch( const char* searchstring, const char* a)
 			{
 				if(!fileLength)
 				{
-					free(buffer);
 					fclose(infile);
 					return 0;
 				}
@@ -260,27 +253,22 @@ int filesearch( const char* searchstring, const char* a)
 			t = 0;
 		}
 	goto skip;
-	free(buffer);
+	
 	return 0;
 }
 
-int recur(const char* dir0, const char* file, int level, const char* searchstring)
-{
-	char *dir, *extended;
-	int ret;
-	
-	dir = (char*)malloc(PATH_MAX + 1);
-	if (dir == NULL) perror("malloc");
-	
-	extended = (char*)malloc(PATH_MAX + 1);
-	if (extended == NULL) perror("malloc");
 
-	strmcpy(dir, dir0, PATH_MAX + 1);
-	if(level == 1)
-	{
-		strmcat(dir, file, PATH_MAX + 1);
-		strmcat(dir, "/", PATH_MAX + 1);
-	}
+
+
+int recur(const char* dir0, const int level, const char* searchstring, int dir_len)
+{
+	char dir[PATH_MAX + 2];
+	//~ int len;
+	int name_length;
+
+	memcpy(dir, dir0, dir_len);
+	dir[dir_len] = '/';
+	dir[++dir_len] = '\0';
 
 	DIR *dp;
 	struct dirent *ep;
@@ -288,93 +276,109 @@ int recur(const char* dir0, const char* file, int level, const char* searchstrin
 	dp = opendir (dir);
 	if(dp != NULL)
 	{
+			
+
 		readdir(dp);
 		readdir(dp);
+		//~ len = 0;
 		while(!(!(ep = readdir(dp))))
 		{
-			strmcpy(extended, dir, PATH_MAX + 1);
-			strmcat(extended, ep->d_name, PATH_MAX + 1);
-			filesearch(searchstring, extended);
-
-			recur(dir, ep->d_name, 1, searchstring);
+			name_length = strlen(ep->d_name);
+			memcpy(dir + dir_len, ep->d_name, name_length + 1);
+			filesearch(searchstring, dir);
+			
+			recur(dir, level + 1, searchstring, dir_len + name_length);
 		}
 
 		(void) closedir (dp);
-		ret = 0;
 	}
 	else
 	{
-		if(level == 0)
+		if(level == 1)
 			perror("Couldn\'t open the directory");
-		ret = 1;
+		return 1;
 	}
-	
-	free(dir);
-	free(extended);
-
-	return ret;
+	return 0;
 }
 
 // argv[1] is a directory, argv[2] is a filename searchstring
 int main (int argc, char** argv)
 {
+	if (pledge("stdio rpath unveil", NULL) == -1)
+		err(1, "pledge line: %d\n", __LINE__);
 	int j, k;
 	char searchstring[PATH_MAX + 1];
 	char dir[PATH_MAX + 1];
 
-	if(argc <= 2)
+	if(argc == 1)
 	{
 		printf("Usage: %s [search-folder] [in-file-search string] optional:[output-length]\n", argv[0]);
 		return 0;
 	}
 	else
-		strmcpy(dir, argv[1], PATH_MAX);
+		strmcpy(dir, argv[1], PATH_MAX + 1);
 
-
-	j = -1;
-	while(dir[++j]);
-	if(dir[j-1] != '/')
-		strmcat(dir, "/", PATH_MAX);
-
-
-	if(argc > 3)
+	if(argc == 2)
 	{
-		if(argc > 4)
+		k = -1;
+		while(dir[++k])
 		{
-			perror("Too many arguments");
-			return 1;
-		}
-		j = strlen(argv[3]);
-		while(j--)
-		{
-			if(argv[3][j] < '0' || argv[3][j] > '9')
+			if(dir[k] == '*')
 			{
-				perror("Digits only in argument 4\n");
+				perror("Initial directory unspecified");
 				return 1;
 			}
 		}
-		beforeandafter = 0;
-		j = -1;
-		k = strlen(argv[3]);
-		while( ++j < k )
-			beforeandafter = beforeandafter * 10 + (int)(argv[3][j] - '0');
-			
-		if(beforeandafter == 0)
-		{
-			perror("Argument 4 must be > 0\n");
-			return 1;
-		}
 	}
-	strmcpy(searchstring, argv[2], PATH_MAX);
 
 
-	buff = (char*)malloc(BUFFSIZE + 1);
-	if (buff == NULL) perror("malloc");
+	if(dir[strlen(dir)-1] != '/')
+		strmcat(dir, "/", PATH_MAX + 1);
 
-	recur(dir, "", 0, searchstring);
-	free(buff);
 
-	printf("\n\n%s:\n%s:\n", searchstring, dir);
+	if(argc > 2)
+	{
+		if(argc > 3)
+		{
+			if(argc > 4)
+			{
+				perror("Too many arguments");
+				return 1;
+			}
+			j = strlen(argv[3]);
+			while(j--)
+			{
+				if(argv[3][j] < '0' || argv[3][j] > '9')
+				{
+					perror("Digits only in argument 4\n");
+					return 1;
+				}
+			}
+			beforeandafter = 0;
+			j = -1;
+			k = strlen(argv[3]);
+			while( ++j < k )
+				beforeandafter = beforeandafter * 10 + (int)(argv[3][j] - '0');
+				
+			if(beforeandafter == 0)
+			{
+				perror("Argument 4 must be > 0\n");
+				return 1;
+			}
+		}
+		strmcpy(searchstring, argv[2], PATH_MAX + 1);
+	}
+
+	if (unveil(dir, "r") == -1)
+		err(1, "unveil line: %d", __LINE__);
+	if (pledge("stdio rpath", NULL) == -1)
+		err(1, "pledge line: %d\n", __LINE__);
+
+	j = strlen(dir) - 1;
+	dir[j] = '\0';
+	
+	recur(dir, 1, searchstring, j);
+
 
 	return 0;
 }
