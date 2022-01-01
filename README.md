@@ -1,4 +1,9 @@
 # dir5
+
+In actuality, grep does this, kind of. I tried this on Linux, but I presume that selinux enhancements stop this from working probably anywhere but in your home directory.
+
+It has a more manageable circular output buffer which is printed upon discovery of a solution. It's slower, but has more meaningful output.
+
 in *NIX OSes, it will search a parent directory, output the first occurrence of a search-string in files
 in the parent directory tree and print surrounding text  and a line number.
 
